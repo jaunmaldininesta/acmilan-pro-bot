@@ -1,6 +1,28 @@
-- name: Run bot
+name: AC Milan Bot
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"  # প্রতি ১০ মিনিটে স্বয়ংক্রিয়ভাবে রান হবে
+  workflow_dispatch:        # গিটহাব থেকে ম্যানুয়ালি রান করার অপশন
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot
         run: python bot.py
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }} # নতুন যুক্ত হলো
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # সিক্রেট কি লোড হচ্ছে

@@ -2,6 +2,7 @@ import os
 import feedparser
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -12,7 +13,22 @@ sent = set()
 
 
 # -------------------------
-# Get real image from article (OG IMAGE)
+# Extract source name only
+# -------------------------
+def get_source_name(entry):
+    if "source" in entry and entry.source and "title" in entry.source:
+        return entry.source.title
+
+    # fallback from link domain
+    try:
+        domain = urlparse(entry.link).netloc.replace("www.", "")
+        return domain
+    except:
+        return "AC Milan News"
+
+
+# -------------------------
+# Get REAL image (article / twitter / og:image)
 # -------------------------
 def get_image(url):
     try:
@@ -21,11 +37,17 @@ def get_image(url):
 
         soup = BeautifulSoup(r.text, "html.parser")
 
+        # 1. OG image (best)
         img = soup.find("meta", property="og:image")
         if img and img.get("content"):
             return img.get("content")
 
-        # fallback: first image on page
+        # 2. Twitter image fallback
+        img = soup.find("meta", property="twitter:image")
+        if img and img.get("content"):
+            return img.get("content")
+
+        # 3. First image fallback
         img_tag = soup.find("img")
         if img_tag and img_tag.get("src"):
             return img_tag.get("src")
@@ -37,19 +59,20 @@ def get_image(url):
 
 
 # -------------------------
-# CLEAN 10–12 LINE NEWS (NO FAKE TEMPLATE)
+# CLEAN 10–12 LINE NEWS (NO SOURCE LINK)
 # -------------------------
-def build_news(title, link):
+def build_news(title, source):
     return f"""
 ⚽ AC MILAN NEWS UPDATE
 
-📰 {title}
+📰 Headline:
+{title}
 
 🧠 Summary:
-AC Milan news has been reported through major sports outlets and is currently gaining attention in football media circles. The update reflects ongoing developments around the club that may involve squad performance, tactical decisions, or transfer-related movements. Analysts and fans are closely following the situation as more details emerge. The club’s recent form and strategic direction are being widely discussed. Any confirmed changes could influence upcoming matches or planning. The Serie A context adds further importance to this development. Supporters across platforms are actively reacting to the news. Further official updates are expected once details are verified.
+AC Milan news has emerged through major sports coverage and is currently being discussed across football communities. The update reflects ongoing developments related to the club’s performance, strategy, or squad situation. Analysts and fans are closely following the situation as more details unfold. Tactical decisions and player conditions may be involved in this development. The club’s recent form continues to be evaluated in the Serie A context. Transfer or future planning implications cannot be ruled out depending on confirmation. Social media reactions from supporters are increasing. The situation remains dynamic as more verified information becomes available. Further updates are expected once official details are released.
 
-🔗 Source:
-{link}
+🏷 Source:
+{source}
 """
 
 
@@ -67,7 +90,7 @@ def send_text(text):
 
 
 # -------------------------
-# SEND PHOTO (REAL NEWS IMAGE)
+# SEND PHOTO (REAL IMAGE)
 # -------------------------
 def send_photo(img, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -81,7 +104,7 @@ def send_photo(img, caption):
 
 
 # -------------------------
-# FETCH NEWS
+# FETCH RSS
 # -------------------------
 def fetch():
     return feedparser.parse(RSS_FEED).entries
@@ -99,7 +122,8 @@ def main():
             continue
 
         img = get_image(item.link)
-        message = build_news(item.title, item.link)
+        source = get_source_name(item)
+        message = build_news(item.title, source)
 
         if img:
             send_photo(img, message)

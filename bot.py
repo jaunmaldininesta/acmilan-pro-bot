@@ -117,7 +117,7 @@ def main():
 
     # বর্তমান সময় (UTC) এবং ১০ মিনিট আগের লিমিট নির্ধারণ
     now = datetime.utcnow()
-    time_threshold = now - timedelta(minutes=11)
+    time_threshold = now - timedelta(hours=24)
 
     for item in news[:5]:  # লেটেস্ট ৫টি নিউজ চেক করবে
 

@@ -18,27 +18,45 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 # ---------------------------------------------------
-# আর্টিকেলের বাস্তব ছবি (Feature Image) বের করা
+# গুগলের রিডাইরেক্ট লিংক থেকে আসল লিংক ও ছবি বের করা
 # ---------------------------------------------------
-def get_real_image(url):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+def get_real_url_and_image(google_news_url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
-        # গুগল নিউজের রিডাইরেক্ট লিংক থেকে আসল URL বের করার চেষ্টা
-        r = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(r.text, "html.parser")
+        # ১. গুগলের লিংকটিতে রিকোয়েস্ট পাঠিয়ে ফাইনাল রিডাইরেক্টেড URL বের করা
+        response = requests.get(google_news_url, headers=headers, timeout=6, allow_redirects=True)
+        real_url = response.url
+        
+        # যদি কোনো কারণে গুগল পেজেই আটকে থাকে, তবে রিডাইরেক্ট মেটা ট্যাগ খোঁজা
+        if "news.google.com" in real_url:
+            soup = BeautifulSoup(response.text, "html.parser")
+            meta_tag = soup.find("meta", attrs={"refresh": True})
+            if meta_tag:
+                content = meta_tag.get("content", "")
+                if "url=" in content:
+                    real_url = content.split("url=")[-1]
 
-        img_tag = soup.find("meta", property="og:image") or soup.find(
-            "meta", attrs={"name": "twitter:image"}
-        )
-        if img_tag:
-            return img_tag.get("content")
-    except:
-        pass
-    return None
+        # ২. এবার আসল নিউজ ওয়েবসাইট থেকে বাস্তব ছবি (og:image) স্ক্র্যাপ করা
+        article_response = requests.get(real_url, headers=headers, timeout=6)
+        article_soup = BeautifulSoup(article_response.text, "html.parser")
+        
+        img_tag = article_soup.find("meta", property="og:image") or \
+                  article_soup.find("meta", attrs={"name": "twitter:image"}) or \
+                  article_soup.find("meta", property="twitter:image")
+                  
+        if img_tag and img_tag.get("content"):
+            return real_url, img_tag.get("content")
+            
+        return real_url, None
+    except Exception as e:
+        print(f"Scraping Error: {e}")
+        return google_news_url, None
 
 
 # ---------------------------------------------------
-# Gemini AI দিয়ে বাস্তব ও নিখুঁত সামারি তৈরি
+# Gemini AI দিয়ে বাস্তব ও নিখুঁত সামারি তৈরি
 # ---------------------------------------------------
 def generate_ai_summary(title, article_url):
     if not ai_client:
@@ -115,7 +133,7 @@ def fetch():
 def main():
     news = fetch()
 
-    # বর্তমান সময় (UTC) এবং ১০ মিনিট আগের লিমিট নির্ধারণ
+    # বর্তমান সময় (UTC) এবং ১০ মিনিট আগের লিমিট নির্ধারণ
     now = datetime.utcnow()
     time_threshold = now - timedelta(hours=24)
 
@@ -125,17 +143,20 @@ def main():
         if hasattr(item, "published_parsed") and item.published_parsed:
             pub_time = datetime(*item.published_parsed[:6])
 
-            # যদি নিউজটি গত ১০ মিনিটের চেয়ে পুরোনো হয়, তবে স্কিপ করবে
+            # যদি নিউজটি গত ১০ মিনিটের চেয়ে পুরোনো হয়, তবে স্কিপ করবে
             if pub_time < time_threshold:
                 continue
         else:
             continue
 
-        # বাস্তব ছবি ও এআই সামারি জেনারেট করা
-        img_url = get_real_image(item.link)
-        ai_summary = generate_ai_summary(item.title, item.link)
+        # সংমিশ্রিত নতুন লজিক: আসল URL এবং বাস্তব ছবি একসাথে বের করা
+        real_url, img_url = get_real_url_and_image(item.link)
 
-        message = build_news_message(item.title, ai_summary, item.link)
+        # AI সামারি তৈরি (আসল বাস্তব লিংকটি প্রম্পটে পাঠানো হচ্ছে)
+        ai_summary = generate_ai_summary(item.title, real_url)
+
+        # ফাইনাল মেসেজ তৈরি
+        message = build_news_message(item.title, ai_summary, real_url)
 
         # ইমেজ থাকলে ইমেজসহ ক্যাপশন যাবে, না থাকলে শুধু টেক্সট যাবে
         if img_url and img_url.startswith("http"):
@@ -143,7 +164,7 @@ def main():
         else:
             send_text(message)
 
-        # Telegram Rate Limit এড়ানোর জন্য ছোট বিরতি
+        # Telegram Rate Limit এড়ানোর জন্য ছোট বিরতি
         time.sleep(2)
 
 

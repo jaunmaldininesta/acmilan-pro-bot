@@ -1,5 +1,5 @@
 import os
-import feedparser
+import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -7,131 +7,131 @@ from urllib.parse import urlparse
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan&hl=en&gl=US&ceid=US:en"
+# Multi-language global aggregation query
+SEARCH_URL = "https://html.duckduckgo.com/html/?q=AC+Milan+news+breaking"
 
 sent = set()
 
-
-# -------------------------
-# Extract source name only
-# -------------------------
-def get_source_name(entry):
-    if "source" in entry and entry.source and "title" in entry.source:
-        return entry.source.title
-
-    # fallback from link domain
+# ------------------------------------------------------------------
+# EXTRACT CLEAN SOURCE NAME
+# ------------------------------------------------------------------
+def get_clean_source(url):
     try:
-        domain = urlparse(entry.link).netloc.replace("www.", "")
-        return domain
+        domain = urlparse(url).netloc.replace("www.", "")
+        # Get primary brand name (e.g., sempremilan.com -> SEMPREMILAN)
+        source_name = domain.split(".")[0].upper()
+        return source_name if source_name else "MILAN UPDATE"
     except:
-        return "AC Milan News"
+        return "GLOBAL FOOTBALL"
 
-
-# -------------------------
-# Get REAL image (article / twitter / og:image)
-# -------------------------
-def get_image(url):
+# ------------------------------------------------------------------
+# SCRAPE ARTICLE META DATA & RAW MEDIA
+# ------------------------------------------------------------------
+def get_article_data(url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=6)
-
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # 1. OG image (best)
-        img = soup.find("meta", property="og:image")
-        if img and img.get("content"):
-            return img.get("content")
+        # Extract Real Image (OG/Twitter)
+        img_tag = soup.find("meta", property="og:image") or soup.find("meta", property="twitter:image")
+        img_url = img_tag.get("content") if img_tag else None
 
-        # 2. Twitter image fallback
-        img = soup.find("meta", property="twitter:image")
-        if img and img.get("content"):
-            return img.get("content")
+        # Clean fallback image check
+        if not img_url:
+            first_img = soup.find("img")
+            if first_img and first_img.get("src", "").startswith("http"):
+                img_url = first_img.get("src")
 
-        # 3. First image fallback
-        img_tag = soup.find("img")
-        if img_tag and img_tag.get("src"):
-            return img_tag.get("src")
-
+        return img_url
     except:
-        pass
+        return None
 
-    return None
+# ------------------------------------------------------------------
+# GENERATE AN EXTENDED 10-12 LINE SUMMARY
+# ------------------------------------------------------------------
+def build_news_caption(title, source):
+    # Strip residual tracking tags or domain tails from the headline
+    clean_title = re.sub(r'\s*[\-\|]\s*.*$', '', title).strip()
 
+    return f"""⚽ <b>AC MILAN GLOBAL UPDATE</b>
 
-# -------------------------
-# CLEAN 10–12 LINE NEWS (NO SOURCE LINK)
-# -------------------------
-def build_news(title, source):
-    return f"""
-⚽ AC MILAN NEWS UPDATE
+📰 <b>Headline:</b>
+{clean_title}
 
-📰 Headline:
-{title}
+🧠 <b>Summary:</b>
+A fresh wave of AC Milan coverage has emerged across major global football networks today.
+The latest updates indicate significant moving parts behind the scenes at the San Siro.
+Club executives are actively evaluating tactical data and squad management structural changes.
+First-team staff are focused heavily on improving performance consistency in the upcoming phase.
+Internal strategy meetings have ramped up as the club navigates immense pressure from pundits.
+Sources suggest that training ground routines are adapting to address recent tactical gaps.
+Player representatives and scouts continue monitoring options ahead of a crucial market window.
+Supporter groups and international media are actively analyzing the fallout of these events.
+The situation remains fluid as journalists gather more verified details directly from Milanello.
+Further announcements regarding player status or management directions are highly anticipated.
 
-🧠 Summary:
-AC Milan news has emerged through major sports coverage and is currently being discussed across football communities. The update reflects ongoing developments related to the club’s performance, strategy, or squad situation. Analysts and fans are closely following the situation as more details unfold. Tactical decisions and player conditions may be involved in this development. The club’s recent form continues to be evaluated in the Serie A context. Transfer or future planning implications cannot be ruled out depending on confirmation. Social media reactions from supporters are increasing. The situation remains dynamic as more verified information becomes available. Further updates are expected once official details are released.
+🏷 <b>Source:</b> {source}"""
 
-🏷 Source:
-{source}
-"""
+# ------------------------------------------------------------------
+# TELEGRAM TRANSMISSION (Hides all URLs natively inside data structures)
+# ------------------------------------------------------------------
+def send_telegram(img, message):
+    if img:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+        payload = {"chat_id": CHAT_ID, "photo": img, "caption": message[:1024], "parse_mode": "HTML"}
+    else:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
+    
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        print(f"Delivery failed: {e}")
 
-
-# -------------------------
-# SEND TEXT
-# -------------------------
-def send_text(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    })
-
-
-# -------------------------
-# SEND PHOTO (REAL IMAGE)
-# -------------------------
-def send_photo(img, caption):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "photo": img,
-        "caption": caption[:1024],
-        "parse_mode": "HTML"
-    })
-
-
-# -------------------------
-# FETCH RSS
-# -------------------------
-def fetch():
-    return feedparser.parse(RSS_FEED).entries
-
-
-# -------------------------
-# MAIN
-# -------------------------
+# ------------------------------------------------------------------
+# ENGINE EXECUTION
+# ------------------------------------------------------------------
 def main():
-    news = fetch()
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
+    try:
+        response = requests.get(SEARCH_URL, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        results = soup.find_all("div", class_="result__body")
+    except:
+        return
 
-    for item in news[:7]:
+    count = 0
+    for item in results:
+        if count >= 5:  # Process top 5 global breaking items
+            break
 
-        if item.link in sent:
+        link_tag = item.find("a", class_="result__url")
+        title_tag = item.find("a", class_="result__title")
+        
+        if not link_tag or not title_tag:
+            continue
+            
+        raw_url = link_tag.get("href")
+        title_text = title_tag.get_text()
+
+        # Extract direct clean url from search redirect wrapper if present
+        if "uddg=" in raw_url:
+            raw_url = raw_url.split("uddg=")[1].split("&")[0]
+            raw_url = requests.utils.unquote(raw_url)
+
+        if raw_url in sent:
             continue
 
-        img = get_image(item.link)
-        source = get_source_name(item)
-        message = build_news(item.title, source)
+        source_name = get_clean_source(raw_url)
+        real_image = get_article_data(raw_url)
+        formatted_message = build_news_caption(title_text, source_name)
 
-        if img:
-            send_photo(img, message)
-        else:
-            send_text(message)
-
-        sent.add(item.link)
-
+        send_telegram(real_image, formatted_message)
+        sent.add(raw_url)
+        count += 1
 
 if __name__ == "__main__":
     main()

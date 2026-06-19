@@ -6,14 +6,14 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from google import genai
 
-# পরিবেশ ভেরিয়েবল (GitHub Secrets থেকে আসবে)
+# পরিবেশ ভেরিয়েবল
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan&hl=en&gl=US&ceid=US:en"
 
-# Gemini ক্লায়েন্ট ইনিশিয়েট করা
+# Gemini ক্লায়েন্ট
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
@@ -25,11 +25,9 @@ def get_real_url_and_image(google_news_url):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        # ১. গুগলের লিংকটিতে রিকোয়েস্ট পাঠিয়ে ফাইনাল রিডাইরেক্টেড URL বের করা
         response = requests.get(google_news_url, headers=headers, timeout=6, allow_redirects=True)
         real_url = response.url
         
-        # যদি কোনো কারণে গুগল পেজেই আটকে থাকে, তবে রিডাইরেক্ট মেটা ট্যাগ খোঁজা
         if "news.google.com" in real_url:
             soup = BeautifulSoup(response.text, "html.parser")
             meta_tag = soup.find("meta", attrs={"refresh": True})
@@ -38,7 +36,6 @@ def get_real_url_and_image(google_news_url):
                 if "url=" in content:
                     real_url = content.split("url=")[-1]
 
-        # ২. এবার আসল নিউজ ওয়েবসাইট থেকে বাস্তব ছবি (og:image) স্ক্র্যাপ করা
         article_response = requests.get(real_url, headers=headers, timeout=6)
         article_soup = BeautifulSoup(article_response.text, "html.parser")
         
@@ -70,7 +67,6 @@ def generate_ai_summary(title, article_url):
     Do not use generic templates or placeholders. Make it sound like a real sports report.
     Format each line with a bullet point (•).
     """
-
     try:
         response = ai_client.models.generate_content(
             model="gemini-2.5-flash",
@@ -101,26 +97,45 @@ def build_news_message(title, summary, link):
 
 
 # ---------------------------------------------------
-# Telegram API Actions
+# Telegram API Actions (ফাইল আপলোড মেথড সহ)
 # ---------------------------------------------------
 def send_text(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(
-        url, data={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
-    )
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
 
 
-def send_photo(img, caption):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    requests.post(
-        url,
-        data={
-            "chat_id": CHAT_ID,
-            "photo": img,
-            "caption": caption[:1024],
-            "parse_mode": "HTML",
-        },
-    )
+def send_photo_as_file(img_url, caption):
+    """ছবিটি লোকালি ডাউনলোড করে ফাইল হিসেবে টেলিগ্রামে আপলোড করার নতুন মেকানিজম"""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    local_filename = "temp_image.jpg"
+    
+    try:
+        # ১. ইমেজটি লোকালি ডাউনলোড করা
+        img_data = requests.get(img_url, headers=headers, timeout=5).content
+        with open(local_filename, 'wb') as handler:
+            handler.write(img_data)
+        
+        # ২. ফাইল আকারে টেলিগ্রামে পোস্ট করা
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+        with open(local_filename, 'rb') as photo_file:
+            files = {'photo': photo_file}
+            data = {
+                "chat_id": CHAT_ID,
+                "caption": caption[:1024],
+                "parse_mode": "HTML"
+            }
+            r = requests.post(url, data=data, files=files)
+            
+        # ৩. কাজ শেষে টেম্পোরারি ফাইলটি ডিলিট করা
+        if os.path.exists(local_filename):
+            os.remove(local_filename)
+            
+        return r.status_code == 200
+    except Exception as e:
+        print(f"Failed to download/upload image: {e}")
+        if os.path.exists(local_filename):
+            os.remove(local_filename)
+        return False
 
 
 def fetch():
@@ -128,43 +143,35 @@ def fetch():
 
 
 # ---------------------------------------------------
-# MAIN FUNCTION (১০ মিনিটের ডুপ্লিকেট ফিল্টারিং সহ)
+# MAIN FUNCTION (২৪ ঘণ্টার ডুপ্লিকেট ফিল্টারিং সহ)
 # ---------------------------------------------------
 def main():
     news = fetch()
 
-    # বর্তমান সময় (UTC) এবং ১০ মিনিট আগের লিমিট নির্ধারণ
     now = datetime.utcnow()
-    time_threshold = now - timedelta(hours=24)
+    time_threshold = now - timedelta(hours=24, minutes=5)
 
-    for item in news[:5]:  # লেটেস্ট ৫টি নিউজ চেক করবে
+    for item in news[:5]:
 
-        # আর্টিকেলের পাবলিশ টাইম চেক করা
         if hasattr(item, "published_parsed") and item.published_parsed:
             pub_time = datetime(*item.published_parsed[:6])
-
-            # যদি নিউজটি গত ১০ মিনিটের চেয়ে পুরোনো হয়, তবে স্কিপ করবে
             if pub_time < time_threshold:
                 continue
         else:
             continue
 
-        # সংমিশ্রিত নতুন লজিক: আসল URL এবং বাস্তব ছবি একসাথে বের করা
         real_url, img_url = get_real_url_and_image(item.link)
-
-        # AI সামারি তৈরি (আসল বাস্তব লিংকটি প্রম্পটে পাঠানো হচ্ছে)
         ai_summary = generate_ai_summary(item.title, real_url)
-
-        # ফাইনাল মেসেজ তৈরি
         message = build_news_message(item.title, ai_summary, real_url)
 
-        # ইমেজ থাকলে ইমেজসহ ক্যাপশন যাবে, না থাকলে শুধু টেক্সট যাবে
+        # ইমেজ থাকলে তা ফাইল মেথডে পাঠানো হবে, ফেইল করলে ব্যাকআপ হিসেবে টেক্সট যাবে
         if img_url and img_url.startswith("http"):
-            send_photo(img_url, message)
+            success = send_photo_as_file(img_url, message)
+            if not success:
+                send_text(message) # ইমেজ আপলোড ফেইল করলে শুধু টেক্সট পাঠাবে
         else:
             send_text(message)
 
-        # Telegram Rate Limit এড়ানোর জন্য ছোট বিরতি
         time.sleep(2)
 
 

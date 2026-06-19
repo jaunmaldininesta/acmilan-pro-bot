@@ -1,5 +1,7 @@
 import os
 import re
+import base64
+import feedparser
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -7,27 +9,47 @@ from urllib.parse import urlparse
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Multi-language global aggregation query
-SEARCH_URL = "https://html.duckduckgo.com/html/?q=AC+Milan+news+breaking"
+# Blends English and Italian tracking indexes for comprehensive AC Milan updates
+RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan+news+breaking&hl=en&gl=US&ceid=US:en"
 
 sent = set()
 
 # ------------------------------------------------------------------
-# EXTRACT CLEAN SOURCE NAME
+# UNWRAP TRACKING LINKS (Gets the actual direct target website)
 # ------------------------------------------------------------------
-def get_clean_source(url):
+def decode_google_url(google_url):
     try:
-        domain = urlparse(url).netloc.replace("www.", "")
-        # Get primary brand name (e.g., sempremilan.com -> SEMPREMILAN)
-        source_name = domain.split(".")[0].upper()
-        return source_name if source_name else "MILAN UPDATE"
+        if "news.google.com" not in google_url:
+            return google_url
+        parts = google_url.split("/")
+        for part in parts:
+            if len(part) > 50 and "-" not in part:
+                padded = part + "=" * ((4 - len(part) % 4) % 4)
+                decoded = base64.b64decode(padded).decode('utf-8', errors='ignore')
+                match = re.search(r'(https?://[^\s"\']+)', decoded)
+                if match:
+                    return match.group(1)
+    except:
+        pass
+    return google_url
+
+# ------------------------------------------------------------------
+# EXTRACT CLEAN SOURCE NAME ONLY (No raw links printed)
+# ------------------------------------------------------------------
+def get_clean_source(entry, real_url):
+    if "source" in entry and entry.get("source") and "title" in entry.source:
+        return entry.source.title.strip().upper()
+    try:
+        domain = urlparse(real_url).netloc.replace("www.", "")
+        brand = domain.split(".")[0].upper()
+        return brand if brand else "MILAN NEWS"
     except:
         return "GLOBAL FOOTBALL"
 
 # ------------------------------------------------------------------
-# SCRAPE ARTICLE META DATA & RAW MEDIA
+# SCRAPE IMAGE METADATA DIRECTLY FROM SITE
 # ------------------------------------------------------------------
-def get_article_data(url):
+def get_article_image(url):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -35,31 +57,35 @@ def get_article_data(url):
         r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Extract Real Image (OG/Twitter)
+        # Prioritize high-res OpenGraph metadata assets
         img_tag = soup.find("meta", property="og:image") or soup.find("meta", property="twitter:image")
-        img_url = img_tag.get("content") if img_tag else None
+        if img_tag and img_tag.get("content"):
+            return img_tag.get("content")
 
-        # Clean fallback image check
-        if not img_url:
-            first_img = soup.find("img")
-            if first_img and first_img.get("src", "").startswith("http"):
-                img_url = first_img.get("src")
-
-        return img_url
+        # Fallback to standard asset tags
+        for img in soup.find_all("img"):
+            src = img.get("src", "")
+            if src.startswith("http") and not any(x in src.lower() for x in ["logo", "icon", "avatar"]):
+                return src
     except:
-        return None
+        pass
+    return None
 
 # ------------------------------------------------------------------
-# GENERATE AN EXTENDED 10-12 LINE SUMMARY
+# PARSE AND CLEAN HEADLINE
+# ------------------------------------------------------------------
+def clean_headline(title):
+    # Strips trailing trailing source tags auto-appended by engines (e.g. "Headline - ESPN")
+    return re.sub(r'\s*[\-\|]\s*.*$', '', title).strip()
+
+# ------------------------------------------------------------------
+# GENERATE AN EXTENDED 10-12 LINE COMPACT SUMMARY BLOCK
 # ------------------------------------------------------------------
 def build_news_caption(title, source):
-    # Strip residual tracking tags or domain tails from the headline
-    clean_title = re.sub(r'\s*[\-\|]\s*.*$', '', title).strip()
-
-    return f"""⚽ <b>AC MILAN GLOBAL UPDATE</b>
+    return f"""⚽ <b>AC MILAN NEWS UPDATE</b>
 
 📰 <b>Headline:</b>
-{clean_title}
+{title}
 
 🧠 <b>Summary:</b>
 A fresh wave of AC Milan coverage has emerged across major global football networks today.
@@ -76,61 +102,52 @@ Further announcements regarding player status or management directions are highl
 🏷 <b>Source:</b> {source}"""
 
 # ------------------------------------------------------------------
-# TELEGRAM TRANSMISSION (Hides all URLs natively inside data structures)
+# TELEGRAM TRANSMISSION ENGINE (Natively injects media without text URLs)
 # ------------------------------------------------------------------
-def send_telegram(img, message):
-    if img:
+def send_telegram(img_url, message):
+    if img_url:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        payload = {"chat_id": CHAT_ID, "photo": img, "caption": message[:1024], "parse_mode": "HTML"}
+        payload = {"chat_id": CHAT_ID, "photo": img_url, "caption": message[:1024], "parse_mode": "HTML"}
     else:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     
     try:
-        requests.post(url, data=payload, timeout=10)
-    except Exception as e:
-        print(f"Delivery failed: {e}")
+        r = requests.post(url, data=payload, timeout=10)
+        return r.status_code == 200
+    except:
+        return False
 
 # ------------------------------------------------------------------
-# ENGINE EXECUTION
+# RUN SCRIPT EXECUTION
 # ------------------------------------------------------------------
 def main():
-    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
-    try:
-        response = requests.get(SEARCH_URL, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
-        results = soup.find_all("div", class_="result__body")
-    except:
+    feed = feedparser.parse(RSS_FEED)
+    if not feed.entries:
         return
 
     count = 0
-    for item in results:
-        if count >= 5:  # Process top 5 global breaking items
+    for item in feed.entries:
+        if count >= 5:  # Pull top 5 recent global entries
             break
 
-        link_tag = item.find("a", class_="result__url")
-        title_tag = item.find("a", class_="result__title")
+        if item.link in sent:
+            continue
+
+        real_url = decode_google_url(item.link)
+        source_name = get_clean_source(item, real_url)
+        headline = clean_headline(item.title)
+        real_image = get_article_image(real_url)
         
-        if not link_tag or not title_tag:
-            continue
-            
-        raw_url = link_tag.get("href")
-        title_text = title_tag.get_text()
+        formatted_message = build_news_caption(headline, source_name)
+        
+        # Dispatch to telegram channel
+        success = send_telegram(real_image, formatted_message)
+        if not success and real_image:
+            # Fallback to plain text message if the target image URL prevents delivery
+            send_telegram(None, formatted_message)
 
-        # Extract direct clean url from search redirect wrapper if present
-        if "uddg=" in raw_url:
-            raw_url = raw_url.split("uddg=")[1].split("&")[0]
-            raw_url = requests.utils.unquote(raw_url)
-
-        if raw_url in sent:
-            continue
-
-        source_name = get_clean_source(raw_url)
-        real_image = get_article_data(raw_url)
-        formatted_message = build_news_caption(title_text, source_name)
-
-        send_telegram(real_image, formatted_message)
-        sent.add(raw_url)
+        sent.add(item.link)
         count += 1
 
 if __name__ == "__main__":

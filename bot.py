@@ -1,5 +1,4 @@
 import os
-import json
 import feedparser
 import requests
 from bs4 import BeautifulSoup
@@ -7,128 +6,108 @@ from bs4 import BeautifulSoup
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-RSS = "https://news.google.com/rss/search?q=AC+Milan&hl=en&gl=US&ceid=US:en"
+RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan&hl=en&gl=US&ceid=US:en"
+
+sent = set()
 
 # -------------------------
-# Load cache (persistent)
-# -------------------------
-def load_cache():
-    try:
-        with open("cache.json", "r") as f:
-            return json.load(f)
-    except:
-        return []
-
-def save_cache(data):
-    with open("cache.json", "w") as f:
-        json.dump(data, f)
-
-cache = load_cache()
-
-# -------------------------
-# Important news filter
-# -------------------------
-def is_important(title):
-    keywords = [
-        "AC Milan", "Milan", "Rossoneri",
-        "transfer", "injury", "coach",
-        "signed", "deal", "breaking"
-    ]
-    t = title.lower()
-    return any(k.lower() in t for k in keywords)
-
-# -------------------------
-# Image extractor
+# Get image from article
 # -------------------------
 def get_image(url):
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=6)
+
         soup = BeautifulSoup(r.text, "html.parser")
         img = soup.find("meta", property="og:image")
+
         if img:
             return img.get("content")
     except:
         pass
+
     return None
 
 # -------------------------
-# AI-style summary generator
+# Extended 10–12 line news
 # -------------------------
-def summarize(title):
+def build_news(title, link):
     return f"""
-⚽ AC MILAN BREAKING ANALYSIS
+⚽ AC MILAN NEWS UPDATE
 
 📰 {title}
 
-📌 Key Insights:
-- Latest development in AC Milan camp
-- Tactical and squad implications under review
-- Media and fan reaction growing rapidly
+📌 Full Analysis:
+- Latest AC Milan development reported globally
+- Tactical updates and squad performance insights
+- Media coverage increasing across Europe
+- Fans reacting strongly on social platforms
 - Serie A impact being evaluated
-- Possible future consequences discussed
-- Club strategy being closely monitored
-- Player condition and performance relevance noted
-- Football analysts providing mixed opinions
-- Transfer or injury angle may be involved
+- Coaching decisions under review
+- Player form and fitness discussed
+- Possible transfer or match implications
+- Club strategy being monitored closely
 - More verified updates expected soon
+
+🔗 Read full article:
+{link}
 """
 
 # -------------------------
-# Telegram send photo
+# Send Telegram text
+# -------------------------
+def send_text(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    res = requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML"
+    })
+
+    print("TEXT RESPONSE:", res.text)
+
+# -------------------------
+# Send Telegram photo
 # -------------------------
 def send_photo(img, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    requests.post(url, data={
+
+    res = requests.post(url, data={
         "chat_id": CHAT_ID,
         "photo": img,
         "caption": caption[:1024],
         "parse_mode": "HTML"
     })
 
-# -------------------------
-# Telegram send text
-# -------------------------
-def send_text(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    })
+    print("PHOTO RESPONSE:", res.text)
 
 # -------------------------
 # Fetch news
 # -------------------------
 def fetch():
-    return feedparser.parse(RSS).entries
+    return feedparser.parse(RSS_FEED).entries
 
 # -------------------------
 # MAIN
 # -------------------------
 def main():
-    global cache
-
     news = fetch()
 
-    for item in news[:10]:
+    for item in news[:7]:
 
-        if item.link in cache:
-            continue
-
-        if not is_important(item.title):
+        if item.link in sent:
             continue
 
         img = get_image(item.link)
-        text = summarize(item.title)
+        message = build_news(item.title, item.link)
 
         if img:
-            send_photo(img, text)
+            send_photo(img, message)
         else:
-            send_text(text)
+            send_text(message)
 
-        cache.append(item.link)
-
-    save_cache(cache)
+        sent.add(item.link)
 
 if __name__ == "__main__":
     main()

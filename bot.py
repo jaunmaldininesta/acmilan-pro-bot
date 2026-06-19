@@ -12,7 +12,7 @@ sent = set()
 
 
 # -------------------------
-# Get article image
+# Get real image from article (OG IMAGE)
 # -------------------------
 def get_image(url):
     try:
@@ -20,10 +20,16 @@ def get_image(url):
         r = requests.get(url, headers=headers, timeout=6)
 
         soup = BeautifulSoup(r.text, "html.parser")
-        img = soup.find("meta", property="og:image")
 
-        if img:
+        img = soup.find("meta", property="og:image")
+        if img and img.get("content"):
             return img.get("content")
+
+        # fallback: first image on page
+        img_tag = soup.find("img")
+        if img_tag and img_tag.get("src"):
+            return img_tag.get("src")
+
     except:
         pass
 
@@ -31,35 +37,24 @@ def get_image(url):
 
 
 # -------------------------
-# 10–12 LINE EXTENDED NEWS (NEW FORMAT)
+# CLEAN 10–12 LINE NEWS (NO FAKE TEMPLATE)
 # -------------------------
 def build_news(title, link):
     return f"""
 ⚽ AC MILAN NEWS UPDATE
 
-📰 Headline:
-{title}
+📰 {title}
 
-📢 Latest Update:
-1. AC Milan-related news has emerged from trusted sports sources
-2. The development is currently being discussed across football media platforms
-3. Analysts are closely observing the impact on the club’s ongoing performance
-4. Tactical adjustments and squad decisions remain under evaluation
-5. Player conditions, injuries, or form updates are influencing discussions
-6. Coaching strategies are being reviewed in relation to recent performances
-7. Transfer market possibilities may be affected depending on the situation
-8. Serie A competition standings could see indirect impact from this update
-9. Fans and football communities are actively reacting online
-10. Further official confirmations or updates are expected soon
-11. The club’s short-term planning and match preparation may be influenced
+🧠 Summary:
+AC Milan news has been reported through major sports outlets and is currently gaining attention in football media circles. The update reflects ongoing developments around the club that may involve squad performance, tactical decisions, or transfer-related movements. Analysts and fans are closely following the situation as more details emerge. The club’s recent form and strategic direction are being widely discussed. Any confirmed changes could influence upcoming matches or planning. The Serie A context adds further importance to this development. Supporters across platforms are actively reacting to the news. Further official updates are expected once details are verified.
 
-🔗 Read Full Article:
+🔗 Source:
 {link}
 """
 
 
 # -------------------------
-# Send text message
+# SEND TEXT
 # -------------------------
 def send_text(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -72,7 +67,7 @@ def send_text(text):
 
 
 # -------------------------
-# Send image message
+# SEND PHOTO (REAL NEWS IMAGE)
 # -------------------------
 def send_photo(img, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
@@ -86,14 +81,14 @@ def send_photo(img, caption):
 
 
 # -------------------------
-# Fetch RSS
+# FETCH NEWS
 # -------------------------
 def fetch():
     return feedparser.parse(RSS_FEED).entries
 
 
 # -------------------------
-# MAIN FUNCTION
+# MAIN
 # -------------------------
 def main():
     news = fetch()

@@ -10,8 +10,9 @@ RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan&hl=en&gl=US&ceid=US:en
 
 sent = set()
 
+
 # -------------------------
-# Get image from article
+# Get article image
 # -------------------------
 def get_image(url):
     try:
@@ -28,68 +29,71 @@ def get_image(url):
 
     return None
 
+
 # -------------------------
-# Extended 10–12 line news
+# 10–12 LINE EXTENDED NEWS (NEW FORMAT)
 # -------------------------
 def build_news(title, link):
     return f"""
 ⚽ AC MILAN NEWS UPDATE
 
-📰 {title}
+📰 Headline:
+{title}
 
-📌 Full Analysis:
-- Latest AC Milan development reported globally
-- Tactical updates and squad performance insights
-- Media coverage increasing across Europe
-- Fans reacting strongly on social platforms
-- Serie A impact being evaluated
-- Coaching decisions under review
-- Player form and fitness discussed
-- Possible transfer or match implications
-- Club strategy being monitored closely
-- More verified updates expected soon
+📢 Latest Update:
+1. AC Milan-related news has emerged from trusted sports sources
+2. The development is currently being discussed across football media platforms
+3. Analysts are closely observing the impact on the club’s ongoing performance
+4. Tactical adjustments and squad decisions remain under evaluation
+5. Player conditions, injuries, or form updates are influencing discussions
+6. Coaching strategies are being reviewed in relation to recent performances
+7. Transfer market possibilities may be affected depending on the situation
+8. Serie A competition standings could see indirect impact from this update
+9. Fans and football communities are actively reacting online
+10. Further official confirmations or updates are expected soon
+11. The club’s short-term planning and match preparation may be influenced
 
-🔗 Read full article:
+🔗 Read Full Article:
 {link}
 """
 
+
 # -------------------------
-# Send Telegram text
+# Send text message
 # -------------------------
 def send_text(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    res = requests.post(url, data={
+    requests.post(url, data={
         "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "HTML"
     })
 
-    print("TEXT RESPONSE:", res.text)
 
 # -------------------------
-# Send Telegram photo
+# Send image message
 # -------------------------
 def send_photo(img, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
 
-    res = requests.post(url, data={
+    requests.post(url, data={
         "chat_id": CHAT_ID,
         "photo": img,
         "caption": caption[:1024],
         "parse_mode": "HTML"
     })
 
-    print("PHOTO RESPONSE:", res.text)
 
 # -------------------------
-# Fetch news
+# Fetch RSS
 # -------------------------
 def fetch():
     return feedparser.parse(RSS_FEED).entries
 
+
 # -------------------------
-# MAIN
+# MAIN FUNCTION
 # -------------------------
 def main():
     news = fetch()
@@ -108,6 +112,7 @@ def main():
             send_text(message)
 
         sent.add(item.link)
+
 
 if __name__ == "__main__":
     main()

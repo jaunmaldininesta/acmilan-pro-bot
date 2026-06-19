@@ -1,154 +1,124 @@
 import os
-import re
-import base64
+import time
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from datetime import datetime, timedelta
+from google import genai
 
+# পরিবেশ ভেরিয়েবল
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Blends English and Italian tracking indexes for comprehensive AC Milan updates
-RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan+news+breaking&hl=en&gl=US&ceid=US:en"
+RSS_FEED = "https://news.google.com/rss/search?q=AC+Milan&hl=en&gl=US&ceid=US:en"
 
-sent = set()
+# Gemini ক্লায়েন্ট ইনিশিয়েট করা
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# ------------------------------------------------------------------
-# UNWRAP TRACKING LINKS (Gets the actual direct target website)
-# ------------------------------------------------------------------
-def decode_google_url(google_url):
+# ---------------------------------------------------
+# আর্টিকেলের বাস্তব ছবি (Feature Image) বের করা
+# ---------------------------------------------------
+def get_real_image(url):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        if "news.google.com" not in google_url:
-            return google_url
-        parts = google_url.split("/")
-        for part in parts:
-            if len(part) > 50 and "-" not in part:
-                padded = part + "=" * ((4 - len(part) % 4) % 4)
-                decoded = base64.b64decode(padded).decode('utf-8', errors='ignore')
-                match = re.search(r'(https?://[^\s"\']+)', decoded)
-                if match:
-                    return match.group(1)
-    except:
-        pass
-    return google_url
-
-# ------------------------------------------------------------------
-# EXTRACT CLEAN SOURCE NAME ONLY (No raw links printed)
-# ------------------------------------------------------------------
-def get_clean_source(entry, real_url):
-    if "source" in entry and entry.get("source") and "title" in entry.source:
-        return entry.source.title.strip().upper()
-    try:
-        domain = urlparse(real_url).netloc.replace("www.", "")
-        brand = domain.split(".")[0].upper()
-        return brand if brand else "MILAN NEWS"
-    except:
-        return "GLOBAL FOOTBALL"
-
-# ------------------------------------------------------------------
-# SCRAPE IMAGE METADATA DIRECTLY FROM SITE
-# ------------------------------------------------------------------
-def get_article_image(url):
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+        # গুগল নিউজের রিডাইরেক্ট লিংক থেকে আসল URL বের করা
         r = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(r.text, "html.parser")
-
-        # Prioritize high-res OpenGraph metadata assets
-        img_tag = soup.find("meta", property="og:image") or soup.find("meta", property="twitter:image")
-        if img_tag and img_tag.get("content"):
+        
+        img_tag = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
+        if img_tag:
             return img_tag.get("content")
-
-        # Fallback to standard asset tags
-        for img in soup.find_all("img"):
-            src = img.get("src", "")
-            if src.startswith("http") and not any(x in src.lower() for x in ["logo", "icon", "avatar"]):
-                return src
     except:
         pass
     return None
 
-# ------------------------------------------------------------------
-# PARSE AND CLEAN HEADLINE
-# ------------------------------------------------------------------
-def clean_headline(title):
-    # Strips trailing trailing source tags auto-appended by engines (e.g. "Headline - ESPN")
-    return re.sub(r'\s*[\-\|]\s*.*$', '', title).strip()
+# ---------------------------------------------------
+# Gemini AI দিয়ে বাস্তব ও নিখুঁত সামারি তৈরি
+# ---------------------------------------------------
+def generate_ai_summary(title, article_url):
+    if not ai_client:
+        return "• Extended summary details are currently being updated in the sports section."
 
-# ------------------------------------------------------------------
-# GENERATE AN EXTENDED 10-12 LINE COMPACT SUMMARY BLOCK
-# ------------------------------------------------------------------
-def build_news_caption(title, source):
-    return f"""⚽ <b>AC MILAN NEWS UPDATE</b>
+    prompt = f"""
+    You are an expert sports journalist for AC Milan. 
+    Analyze this news headline: "{title}" and the article link: {article_url}.
+    Write a 6 to 8 line bulleted analytical summary about this update in professional English.
+    Focus only on real tactical points, fan reactions, or match/transfer impacts relevant to this headline.
+    Do not use generic templates. Make it sound like a real sports report.
+    Format each line with a bullet point (•).
+    """
+    
+    try:
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini API Error: {e}")
+        return "• Direct article insights are currently evaluating by football media networks."
+
+# ---------------------------------------------------
+# মেসেজ ফরম্যাট
+# ---------------------------------------------------
+def build_news_message(title, summary, link):
+    return f"""
+⚽ <b>AC MILAN NEWS UPDATE</b>
 
 📰 <b>Headline:</b>
 {title}
 
-🧠 <b>Summary:</b>
-A fresh wave of AC Milan coverage has emerged across major global football networks today.
-The latest updates indicate significant moving parts behind the scenes at the San Siro.
-Club executives are actively evaluating tactical data and squad management structural changes.
-First-team staff are focused heavily on improving performance consistency in the upcoming phase.
-Internal strategy meetings have ramped up as the club navigates immense pressure from pundits.
-Sources suggest that training ground routines are adapting to address recent tactical gaps.
-Player representatives and scouts continue monitoring options ahead of a crucial market window.
-Supporter groups and international media are actively analyzing the fallout of these events.
-The situation remains fluid as journalists gather more verified details directly from Milanello.
-Further announcements regarding player status or management directions are highly anticipated.
+📢 <b>Latest Breakdown:</b>
+{summary}
 
-🏷 <b>Source:</b> {source}"""
+🔗 <b>Read Full Article:</b>
+<a href="{link}">Click Here for Details</a>
+"""
 
-# ------------------------------------------------------------------
-# TELEGRAM TRANSMISSION ENGINE (Natively injects media without text URLs)
-# ------------------------------------------------------------------
-def send_telegram(img_url, message):
-    if img_url:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        payload = {"chat_id": CHAT_ID, "photo": img_url, "caption": message[:1024], "parse_mode": "HTML"}
-    else:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
-    
-    try:
-        r = requests.post(url, data=payload, timeout=10)
-        return r.status_code == 200
-    except:
-        return False
+# ---------------------------------------------------
+# Telegram Actions
+# ---------------------------------------------------
+def send_text(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
 
-# ------------------------------------------------------------------
-# RUN SCRIPT EXECUTION
-# ------------------------------------------------------------------
+def send_photo(img, caption):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    requests.post(url, data={"chat_id": CHAT_ID, "photo": img, "caption": caption[:1024], "parse_mode": "HTML"})
+
+def fetch():
+    return feedparser.parse(RSS_FEED).entries
+
+# ---------------------------------------------------
+# MAIN FUNCTION
+# ---------------------------------------------------
 def main():
-    feed = feedparser.parse(RSS_FEED)
-    if not feed.entries:
-        return
+    news = fetch()
+    
+    now = datetime.utcnow()
+    time_threshold = now - timedelta(minutes=11) # ১০ মিনিটের আগের পুরোনো নিউজ বাদ দিবে
 
-    count = 0
-    for item in feed.entries:
-        if count >= 5:  # Pull top 5 recent global entries
-            break
-
-        if item.link in sent:
+    for item in news[:5]:
+        if hasattr(item, 'published_parsed') and item.published_parsed:
+            pub_time = datetime(*item.published_parsed[:6])
+            if pub_time < time_threshold:
+                continue
+        else:
             continue
 
-        real_url = decode_google_url(item.link)
-        source_name = get_clean_source(item, real_url)
-        headline = clean_headline(item.title)
-        real_image = get_article_image(real_url)
+        # বাস্তব ছবি ও এআই সামারি জেনারেট করা
+        img_url = get_real_image(item.link)
+        ai_summary = generate_ai_summary(item.title, item.link)
         
-        formatted_message = build_news_caption(headline, source_name)
-        
-        # Dispatch to telegram channel
-        success = send_telegram(real_image, formatted_message)
-        if not success and real_image:
-            # Fallback to plain text message if the target image URL prevents delivery
-            send_telegram(None, formatted_message)
+        message = build_news_message(item.title, ai_summary, item.link)
 
-        sent.add(item.link)
-        count += 1
+        if img_url and img_url.startswith("http"):
+            send_photo(img_url, message)
+        else:
+            send_text(message)
+            
+        time.sleep(2)
 
 if __name__ == "__main__":
     main()

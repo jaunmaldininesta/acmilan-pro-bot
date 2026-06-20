@@ -194,7 +194,40 @@ def main():
         ai_summary = generate_ai_summary(item.title, real_url)
         message = build_news_message(item.title, ai_summary, real_url)
 
-send_photo_as_file(
+def main():
+news = fetch()
+
+```
+now = datetime.utcnow()
+time_threshold = now - timedelta(minutes=360)
+
+for item in news[:5]:
+
+    if hasattr(item, "published_parsed") and item.published_parsed:
+        pub_time = datetime(*item.published_parsed[:6])
+
+        if pub_time < time_threshold:
+            continue
+    else:
+        continue
+
+    real_url, img_url = get_real_url_and_image(
+        item.link,
+        item.title
+    )
+
+    ai_summary = generate_ai_summary(
+        item.title,
+        real_url
+    )
+
+    message = build_news_message(
+        item.title,
+        ai_summary,
+        real_url
+    )
+
+    send_photo_as_file(
         img_url,
         item.title
     )
@@ -202,6 +235,8 @@ send_photo_as_file(
     send_text(message)
 
     time.sleep(3)
+```
 
-if __name__ == "__main__":
-    main()
+if **name** == "**main**":
+main()
+

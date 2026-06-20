@@ -215,7 +215,7 @@ def main():
             real_url
         )
 
-        message = build_news_message(
+                message = build_news_message(
             item.title,
             ai_summary,
             real_url
@@ -229,6 +229,9 @@ def main():
         send_text(message)
 
         time.sleep(3)
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":

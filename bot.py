@@ -132,7 +132,7 @@ def send_text(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
 
-def send_photo_as_file(img_url, caption, title):
+def send_photo_as_file(img_url, title):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     local_filename = "temp_image.jpg"
     
@@ -153,10 +153,10 @@ def send_photo_as_file(img_url, caption, title):
         with open(local_filename, 'rb') as photo_file:
             files = {'photo': photo_file}
             data = {
-                "chat_id": CHAT_ID,
-                "caption": caption[:1024],
-                "parse_mode": "HTML"
-            }
+    "chat_id": CHAT_ID,
+    "caption": f"📰 {title[:200]}",
+    "parse_mode": "HTML"
+}
             r = requests.post(url, data=data, files=files)
             
         if os.path.exists(local_filename):
@@ -194,9 +194,12 @@ def main():
         ai_summary = generate_ai_summary(item.title, real_url)
         message = build_news_message(item.title, ai_summary, real_url)
 
-        success = send_photo_as_file(img_url, message, item.title)
-        if not success:
-            send_text(message)
+send_photo_as_file(
+    img_url,
+    item.title
+)
+
+send_text(message)
 
         time.sleep(3)
 

@@ -9,6 +9,10 @@ from google import genai
 
 # পরিবেশ ভেরিয়েবল
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+IMAGE_PROXY = {
+    "http": "http://rnasqktp:agyytxfcrahm@31.59.20.176:6754",
+    "https": "http://rnasqktp:agyytxfcrahm@31.59.20.176:6754"
+}
 CHAT_ID = os.getenv("CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -138,12 +142,22 @@ def send_photo_as_file(img_url, title):
     
     try:
         # ইমেজটি ডাউনলোড করা
-        img_response = requests.get(img_url, headers=headers, timeout=8)
+        img_response = requests.get(
+    img_url,
+    headers=headers,
+    timeout=8,
+    proxies=IMAGE_PROXY
+)
         
         # গিটহাব সার্ভার যদি ব্লক খায় (status_code 200 না আসে), সাথে সাথে বিকল্প পুল থেকে রিয়েল ছবি নামাবে
         if img_response.status_code != 200 or len(img_response.content) < 1000:
             fallback_url = search_fallback_image(title)
-            img_response = requests.get(fallback_url, headers=headers, timeout=6)
+            img_response = requests.get(
+    fallback_url,
+    headers=headers,
+    timeout=6,
+    proxies=IMAGE_PROXY
+)
             
         with open(local_filename, 'wb') as handler:
             handler.write(img_response.content)

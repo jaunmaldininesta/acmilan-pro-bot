@@ -179,7 +179,7 @@ def main():
     news = fetch()
 
     now = datetime.utcnow()
-    time_threshold = now - timedelta(minutes=15)
+    time_threshold = now - timedelta(minutes=360)
 
     for item in news[:5]:
 

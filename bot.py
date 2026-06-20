@@ -195,13 +195,13 @@ def main():
         message = build_news_message(item.title, ai_summary, real_url)
 
 send_photo_as_file(
-    img_url,
-    item.title
-)
+        img_url,
+        item.title
+    )
 
-send_text(message)
+    send_text(message)
 
-        time.sleep(3)
+    time.sleep(3)
 
 if __name__ == "__main__":
     main()
